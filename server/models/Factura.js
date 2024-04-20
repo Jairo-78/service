@@ -25,6 +25,7 @@ const facturaSchema = new mongoose.Schema({
     },
   ],
   celular: String,
+  direccion: String,
   Pago: String,
   ListPago: [
     {

@@ -26,6 +26,7 @@ const createPuntosObj = (res, points) => {
     _id: idOrdenService,
     dni: dni,
     Nombre: nombre,
+    direccion,
     celular: phone,
   } = res;
 
@@ -37,6 +38,7 @@ const createPuntosObj = (res, points) => {
     $set: {
       nombre,
       phone,
+      direccion,
     },
     $push: {
       infoScore: {
@@ -67,6 +69,7 @@ router.post("/add-factura", openingHours, async (req, res) => {
       Nombre,
       Items,
       celular,
+      direccion,
       Pago,
       ListPago,
       datePrevista,
@@ -131,6 +134,7 @@ router.post("/add-factura", openingHours, async (req, res) => {
       Nombre,
       Items,
       celular,
+      direccion,
       Pago,
       ListPago,
       datePrevista,
