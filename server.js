@@ -58,20 +58,13 @@ io.on("connection", (socket) => {
 
   // Maneja eventos cuando el cliente envía un mensaje
   socket.on("client:newOrder", (info) => {
-    const { newOrder } = info;
-    if ("newDelivery" in info) {
-      const { newDelivery } = info;
-      socket.broadcast.emit("server:newDelivery", newDelivery);
-    }
-
-    // Envía el mensaje a todos los clientes conectados
-    if ("newCodigo" in info) {
-      const { newCodigo } = info;
-      io.emit("server:newCodigo", newCodigo);
-    }
-
-    socket.broadcast.emit("server:newOrder", newOrder);
+    socket.broadcast.emit("server:newOrder", info);
   });
+
+  socket.on("client:updateCodigo", (info) => {
+    io.emit("server:updateCodigo", info);
+  });
+
   socket.on("client:updateOrder", (info) => {
     const { orderUpdated } = info;
 
