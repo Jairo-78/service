@@ -46,11 +46,16 @@ const server = http.createServer(app);
 
 export const io = new SocketServer(server, {
   cors: {
-    origin: "*",
+    origin: "https://lavanderiamunozdqs.onrender.com",
   },
 });
 
-app.use(cors());
+app.use(
+  cors({
+    origin: "https://lavanderiamunozdqs.onrender.com",
+  })
+);
+
 app.use(express.json());
 
 io.on("connection", (socket) => {
