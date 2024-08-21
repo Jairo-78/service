@@ -4,7 +4,8 @@ import Factura from "../models/Factura.js";
 import moment from "moment";
 import db from "../config/db.js";
 import Pagos from "../models/pagos.js";
-import { handleGetInfoUser } from "./cuadreDiario.js";
+import Usuario from "../models/usuarios/usuarios.js";
+import { mapArrayByKey, mapObjectByKey } from "../utils/utilsFuncion.js";
 
 const router = express.Router();
 
@@ -15,39 +16,80 @@ router.post("/add-to-warehouse", async (req, res) => {
   session.startTransaction();
   try {
     const { Ids } = req.body;
-    // Actualizar la ubicación de las facturas
-    const updatedFacturas = [];
-    // Agregar las facturas al almacén
-    const fechaHora = moment().format("YYYY-MM-DD HH:mm");
+
+    const ordersAlmacenados = [];
+    const Fecha = moment().format("YYYY-MM-DD");
+    const Hora = moment().format("HH:mm");
+
+    // Actualizar la ubicación de las Ordenes
     for (const facturaId of Ids) {
-      const factura = await Factura.findById(facturaId).session(session);
-      if (!factura) {
-        throw new Error(`Factura no encontrada: ${facturaId}`);
-      }
-
-      factura.location = 2;
-      await factura.save({ session: session });
-
-      updatedFacturas.push({
-        ...factura.toObject(),
-        dateStorage: {
-          fecha: fechaHora.split(" ")[0],
-          hora: fechaHora.split(" ")[1],
+      const orderUpdate = await Factura.findByIdAndUpdate(
+        facturaId,
+        {
+          location: 2,
         },
+        {
+          new: true,
+          session: session,
+        }
+      ).lean();
+
+      // Buscar todos los pagos relacionados con los listPagosIds
+      const infoPagos = await Pagos.find({
+        _id: { $in: orderUpdate.listPago },
+      }).lean();
+
+      // Obtener todos los idUser de los pagos sin repeticiones
+      const idUsers = [...new Set(infoPagos.map((pago) => pago.idUser))];
+
+      // Buscar la información de los usuarios relacionados con los idUsers
+      const usuarios = await Usuario.find(
+        { _id: { $in: idUsers } },
+        {
+          _id: 1,
+          name: 1,
+          usuario: 1,
+          rol: 1,
+        }
+      ).lean();
+
+      // Crear un mapa de para usuarios  por su _id
+      const usuariosMap = mapObjectByKey(usuarios, "_id");
+
+      const ListPago = infoPagos.map((pago) => ({
+        _id: pago._id,
+        idUser: pago.idUser,
+        idOrden: pago.idOrden,
+        orden: orderUpdate.codRecibo,
+        date: pago.date,
+        nombre: orderUpdate.Nombre,
+        total: pago.total,
+        metodoPago: pago.metodoPago,
+        Modalidad: orderUpdate.Modalidad,
+        isCounted: pago.isCounted,
+        infoUser: usuariosMap[pago.idUser],
+      }));
+
+      // Agregar las Orden a Almacen
+      const almacen = new Almacen({
+        idOrden: facturaId,
+        storageDate: {
+          fecha: Fecha,
+          hora: Hora,
+        },
+      });
+
+      await almacen.save({ session: session });
+
+      ordersAlmacenados.push({
+        ...orderUpdate,
+        ListPago,
+        dateStorage: almacen.storageDate,
       });
     }
 
-    const almacenamiento = new Almacen({
-      serviceOrder: Ids,
-      storageDate: {
-        fecha: fechaHora.split(" ")[0],
-        hora: fechaHora.split(" ")[1],
-      },
-    });
-
-    await almacenamiento.save({ session: session });
-
-    res.status(200).json(updatedFacturas);
+    // Devolver una respuesta exitosa
+    res.status(201).json(ordersAlmacenados);
     await session.commitTransaction();
   } catch (error) {
     await session.abortTransaction();
@@ -57,77 +99,73 @@ router.post("/add-to-warehouse", async (req, res) => {
   }
 });
 
-router.get("/get-warehouse-service-order", async (req, res) => {
+router.get("/get-warehouse-order", async (req, res) => {
   try {
     // Obtener todos los documentos de la colección Almacen
-    const almacenes = await Almacen.find();
+    const almacenes = await Almacen.find().lean();
 
-    // Array para almacenar todas las facturas
-    let todasLasFacturas = [];
+    // Obtener todos los IDs de serviceOrder de todos los documentos de Almacen
+    const serviceOrderIds = almacenes.map((almacen) => almacen.idOrden);
 
-    // Recorrer cada documento de Almacen
-    for (const almacen of almacenes) {
-      // Recorrer cada serviceOrder del documento
-      for (const orderId of almacen.serviceOrder) {
-        // Buscar la factura relacionada con el orderId
-        const factura = await Factura.findOne({ _id: orderId }).lean();
-        const pagosIds = factura.listPago;
+    // Buscar todas las facturas relacionadas con los serviceOrderIds
+    const facturas = await Factura.find({
+      _id: { $in: serviceOrderIds },
+    }).lean();
 
-        // Buscar los detalles de cada pago usando los IDs
-        const ListPago = await Promise.all(
-          pagosIds.map(async (pagoId) => {
-            const pago = await Pagos.findById(pagoId);
-            if (!pago) {
-              throw new Error(`Pago con ID ${pagoId} no encontrado`);
-            }
-            const infoUser = await handleGetInfoUser(pago.idUser);
-            return {
-              _id: pago._id,
-              idUser: pago.idUser,
-              orden: factura.codRecibo,
-              idOrden: pago.idOrden,
-              date: pago.date,
-              nombre: factura.Nombre,
-              total: pago.total,
-              metodoPago: pago.metodoPago,
-              Modalidad: factura.Modalidad,
-              isCounted: pago.isCounted,
-              infoUser: infoUser,
-            };
-          })
-        );
+    // Obtener todos los IDs de listPago de todas las facturas
+    const listPagosIds = facturas.flatMap((factura) => factura.listPago);
 
-        // Si se encuentra una factura, agregarla a todasLasFacturas
-        if (factura) {
-          todasLasFacturas.push({
-            ...factura,
-            dateStorage: almacen.storageDate,
-            ListPago,
-          });
-        }
+    // Buscar todos los pagos relacionados con los listPagosIds
+    const pagos = await Pagos.find({ _id: { $in: listPagosIds } }).lean();
+
+    // Agrupar los pagos por ID de orden en un array
+    const pagosMap = mapArrayByKey(pagos, "idOrden");
+
+    // Obtener todos los idUser de los pagos sin repeticiones
+    const idUsers = [...new Set(pagos.map((pago) => pago.idUser))];
+
+    // Buscar la información de los usuarios relacionados con los idUsers
+    const usuarios = await Usuario.find(
+      { _id: { $in: idUsers } },
+      {
+        _id: 1,
+        name: 1,
+        usuario: 1,
+        rol: 1,
       }
-    }
+    ).lean();
 
-    res.status(200).json(todasLasFacturas);
+    // Crear un mapa para usuarios y almacen por su _id
+    const usuariosMap = mapObjectByKey(usuarios, "_id");
+    const almacenMap = mapObjectByKey(almacenes, "idOrden");
+
+    // Mapear las facturas con sus pagos correspondientes
+    const facturasAlmacen = facturas.map((factura) => {
+      const ListPago = (pagosMap[factura._id.toString()] || []).map((pago) => ({
+        _id: pago._id,
+        idUser: pago.idUser,
+        idOrden: pago.idOrden,
+        orden: factura.codRecibo,
+        date: pago.date,
+        nombre: factura.Nombre,
+        total: pago.total,
+        metodoPago: pago.metodoPago,
+        Modalidad: factura.Modalidad,
+        isCounted: pago.isCounted,
+        infoUser: usuariosMap[pago.idUser.toString()],
+      }));
+
+      return {
+        ...factura,
+        ListPago,
+        dateStorage: almacenMap[factura._id.toString()].storageDate,
+      };
+    });
+
+    res.status(200).json(facturasAlmacen);
   } catch (error) {
     console.error("Error al obtener datos: ", error);
     res.status(500).json({ mensaje: "No se pudo obtener las facturas" });
-  }
-});
-
-router.delete("/remove-from-warehouse/:id", async (req, res) => {
-  try {
-    const { id } = req.params; // Obtén el ID que se desea eliminar
-
-    // Actualiza todos los registros de Almacen
-    await Almacen.updateMany(
-      { serviceOrder: id },
-      { $pull: { serviceOrder: id } }
-    );
-    res.status(200).json({ mensaje: "Valor removido de Almacen" });
-  } catch (error) {
-    console.error("Error al eliminar el valor de serviceOrder: ", error);
-    res.status(500).json({ mensaje: "No remover orden de almacen" });
   }
 });
 
