@@ -841,25 +841,50 @@ router.put(
   }
 );
 
-// ACTUALIZA INFORMACION DE ITEMS EN LA ORDEN
-router.put("/update-factura/detalle/:id", async (req, res) => {
+// ACTUALIZA INFORMACION DE ITEMS EN LA ORDEN (SOLO DETALLE), Nombre, direccion, numero, documento
+router.put("/update-factura/simple-info/:id", async (req, res) => {
   const session = await db.startSession();
   session.startTransaction();
 
   try {
     const facturaId = req.params.id;
-    const { Items, lastEdit } = req.body.infoOrden;
+    const { Nombre, direccion, celular, dni, Items, idCliente, lastEdit } =
+      req.body.infoOrden;
 
-    // Actualizar los Items utilizando findByIdAndUpdate
+    let clienteActualizado = null;
+
+    // Intentar actualizar la información del cliente si se proporciona idCliente
+    if (idCliente) {
+      clienteActualizado = await clientes
+        .findByIdAndUpdate(
+          idCliente,
+          {
+            $set: { nombre: Nombre, direccion, phone: celular, dni: dni },
+          },
+          { new: true, session } // Retornar el documento actualizado y usar la sesión
+        )
+        .lean();
+    }
+
+    // Actualizar la información de la factura
     const infoUpdated = await Factura.findByIdAndUpdate(
       facturaId,
-      { $set: { Items, lastEdit } },
-      { new: true, session, fields: { Items: 1 } } // Solo devuelve el campo Items
+      {
+        $set: { Nombre, direccion, celular, dni, Items, lastEdit },
+      },
+      {
+        new: true,
+        session,
+        fields: { Nombre, direccion, celular, dni, Items },
+      }
     ).lean();
 
     await session.commitTransaction();
 
-    res.json(infoUpdated);
+    res.json({
+      ordenService: infoUpdated,
+      cliente: clienteActualizado, // Puede ser null si no se encontró el cliente
+    });
   } catch (error) {
     await session.abortTransaction();
     console.error("Error al actualizar los datos de la orden:", error);
